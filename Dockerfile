@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y curl build-essential && \
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source code
-COPY main.py client.py cache.py utils.py ./
+COPY *.py ./
 COPY frontend/app/ ./static/
 COPY templates/ ./templates/
 COPY endpoints/ ./endpoints/
