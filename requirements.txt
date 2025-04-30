@@ -12,6 +12,11 @@ uvloop>=0.17.0 ; sys_platform != 'win32'  # uvloop doesn't support Windows
 # HTTP client
 httpx>=0.23.0
 
+# Authentication
+python-jose[cryptography]  # JWT operations
+passlib[bcrypt]           # Password hashing
+python-multipart          # Form data parsing
+
 # Utilities
 python-multipart==0.0.18
 pydantic==2.4.0
