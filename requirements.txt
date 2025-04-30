@@ -13,9 +13,14 @@ uvloop>=0.17.0 ; sys_platform != 'win32'  # uvloop doesn't support Windows
 httpx>=0.23.0
 
 # Authentication
-python-jose[cryptography]  # JWT operations
-passlib[bcrypt]           # Password hashing
-python-multipart          # Form data parsing
+python-jose[cryptography]>=1.3.0  # JWT operations
+passlib[bcrypt]                   # Password hashing
+python-multipart                  # Form data parsing
+itsdangerous>=2.1.2               # Session middleware
+
+# OIDC
+authlib>=1.2.0                    # OAuth/OIDC library
+starlette-session>=0.4.3          # Session management
 
 # Utilities
 python-multipart==0.0.18

@@ -14,11 +14,16 @@ import asyncio
 import uvicorn
 import datetime
 from functools import lru_cache
+from starlette.middleware.sessions import SessionMiddleware
 
 # Import the VyOS API wrapper
 from client import VyOSClient
 from utils import VyOSAPIError, merge_cidr_parts
 from cache import cache, cached, invalidate_cache
+from auth import (
+    OIDC_ENABLED, get_current_user, get_login_url, exchange_code_for_token,
+    create_session_cookie, get_logout_url, require_auth, require_admin, User
+)
 
 # Application state
 UNSAVED_CHANGES = False
@@ -42,6 +47,10 @@ VYOS_API_URL = os.getenv("VYOS_API_URL", "")
 CERT_PATH = os.getenv("CERT_PATH", "")
 TRUST_SELF_SIGNED = os.getenv("TRUST_SELF_SIGNED", "false").lower() == "true"
 HTTPS = os.getenv("VYOS_HTTPS", "true").lower() == "true"
+
+# Authentication settings
+SESSION_SECRET = os.getenv("SESSION_SECRET", "supersecretkey")
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() == "true"
 
 # Debug: Print the actual environment variables being used
 print(f"DEBUG: Using VYOS_HOST={VYOS_HOST}")
@@ -112,6 +121,61 @@ app.add_middleware(
 
 # Create API router
 api_router = APIRouter(prefix="/api")
+
+# Create Auth router
+auth_router = APIRouter(prefix="/auth")
+
+# Add Session Middleware for OIDC state management
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    max_age=3600,  # 1 hour
+)
+
+# Authentication middleware
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Skip authentication for public routes
+    path = request.url.path
+    
+    public_paths = [
+        "/static", 
+        "/auth/login", 
+        "/auth/callback", 
+        "/auth/logout",
+        "/"  # Homepage is public
+    ]
+    
+    # Check if the route should be public
+    is_public = any(path.startswith(prefix) for prefix in public_paths)
+    
+    # Skip authentication checks if path is public or auth is disabled
+    if not AUTH_ENABLED or is_public or path.startswith("/docs") or path.startswith("/redoc"):
+        return await call_next(request)
+    
+    # For API routes, check for authentication
+    if path.startswith("/api"):
+        # Check if user is authenticated
+        user = await get_current_user(request)
+        if not user:
+            # For API requests, return 401 Unauthorized
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"}
+            )
+    
+    # For all other routes, check if user is authenticated
+    user = await get_current_user(request)
+    if not user:
+        # For web routes, redirect to login
+        login_url = "/"
+        return RedirectResponse(url=login_url)
+    
+    # Attach user to request state for use in route handlers
+    request.state.user = user
+    
+    # Continue processing
+    return await call_next(request)
 
 # Security middleware for production
 @app.middleware("http")
@@ -860,6 +924,121 @@ async def graphql_endpoint(request: Request, client: VyOSClient = Depends(get_vy
     except Exception as e:
         return {"success": False, "error": str(e), "data": None}
 
+# Auth routes for OIDC
+@auth_router.get("/login")
+async def login(request: Request):
+    """Initiate OIDC login flow"""
+    if not OIDC_ENABLED:
+        return {"detail": "OIDC authentication is not configured"}
+    
+    try:
+        # Get login URL from OIDC provider
+        login_url = await get_login_url(request)
+        return RedirectResponse(url=login_url)
+    except Exception as e:
+        if not IS_PRODUCTION:
+            return {"error": str(e)}
+        return RedirectResponse(url="/")
+
+@auth_router.get("/callback")
+async def auth_callback(request: Request, code: str, state: Optional[str] = None):
+    """Handle OIDC callback after successful authentication"""
+    if not OIDC_ENABLED:
+        return RedirectResponse(url="/")
+    
+    # Validate state to prevent CSRF
+    session_state = request.session.get("oidc_state")
+    if not session_state or session_state != state:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Invalid state parameter"}
+        )
+    
+    try:
+        # Exchange code for tokens
+        tokens = await exchange_code_for_token(code)
+        
+        # Extract tokens
+        id_token = tokens.get("id_token")
+        access_token = tokens.get("access_token")
+        expires_in = tokens.get("expires_in", 3600)
+        
+        if not id_token or not access_token:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid token response"}
+            )
+        
+        # Create session cookies
+        session_data = await create_session_cookie(id_token, access_token, expires_in)
+        
+        # Create response
+        response = RedirectResponse(url="/")
+        
+        # Set cookies
+        response.set_cookie(
+            key="session_token",
+            value=session_data["session_token"],
+            httponly=True,
+            secure=IS_PRODUCTION,
+            max_age=expires_in,
+            samesite="lax"
+        )
+        
+        # Store id_token for logout
+        response.set_cookie(
+            key="id_token",
+            value=id_token,
+            httponly=True,
+            secure=IS_PRODUCTION,
+            max_age=expires_in,
+            samesite="lax"
+        )
+        
+        return response
+    except Exception as e:
+        if not IS_PRODUCTION:
+            return JSONResponse(
+                status_code=500,
+                content={"detail": str(e)}
+            )
+        return RedirectResponse(url="/")
+
+@auth_router.get("/logout")
+async def logout(request: Request):
+    """Logout user and redirect to OIDC provider logout"""
+    id_token = request.cookies.get("id_token")
+    
+    # Get logout URL from OIDC provider
+    logout_url = await get_logout_url(id_token)
+    
+    # Create response
+    response = RedirectResponse(url=logout_url)
+    
+    # Clear cookies
+    response.delete_cookie("session_token")
+    response.delete_cookie("id_token")
+    
+    return response
+
+@auth_router.get("/user")
+async def get_user(request: Request):
+    """Get current user information"""
+    user = await get_current_user(request)
+    if not user:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Not authenticated"}
+        )
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "roles": user.roles,
+        "is_admin": user.is_admin
+    }
+
 # Legacy redirect for backwards compatibility
 @app.get("/dhcpleases")
 async def legacy_dhcpleases_redirect():
@@ -892,8 +1071,61 @@ async def api_cache_clear(pattern: Optional[str] = None):
         "error": None
     })
 
+# Authentication API routes
+@api_router.get("/auth/status")
+async def api_auth_status(request: Request):
+    """Check authentication status"""
+    if not AUTH_ENABLED:
+        return JSONResponse(content={
+            "success": True,
+            "authenticated": True,  # Always authenticated when auth is disabled
+            "auth_enabled": False,
+            "user": None
+        })
+    
+    user = await get_current_user(request)
+    return JSONResponse(content={
+        "success": True,
+        "authenticated": user is not None,
+        "auth_enabled": AUTH_ENABLED,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "roles": user.roles,
+            "is_admin": user.is_admin
+        } if user else None
+    })
+
+@api_router.get("/auth/login-url")
+async def api_auth_login_url(request: Request):
+    """Get login URL for OIDC"""
+    if not AUTH_ENABLED or not OIDC_ENABLED:
+        return JSONResponse(content={
+            "success": False,
+            "error": "Authentication is not enabled"
+        })
+    
+    try:
+        login_url = await get_login_url(request)
+        return JSONResponse(content={
+            "success": True,
+            "login_url": login_url
+        })
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": str(e)
+            }
+        )
+
 # Include API router
 app.include_router(api_router)
+
+# Include Auth router
+app.include_router(auth_router)
 
 # Startup event to run connection test
 @app.on_event("startup")
@@ -904,7 +1136,12 @@ async def startup_event():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Serve the main application page"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    user = await get_current_user(request)
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "user": user,
+        "auth_enabled": AUTH_ENABLED
+    })
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -924,6 +1161,14 @@ async def dashboard(request: Request):
         "uptime": f"{uptime_minutes} minutes"
     }
     
+    user = await get_current_user(request)
+    
+    # Check if user is admin when auth is enabled
+    is_admin = user and user.is_admin if AUTH_ENABLED else True
+    
+    if AUTH_ENABLED and not is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
     return templates.TemplateResponse(
         "dashboard.html", 
         {
@@ -931,7 +1176,9 @@ async def dashboard(request: Request):
             "cache_data": cache_data,
             "app_version": "1.0.0",
             "vyos_host": VYOS_HOST,
-            "is_production": IS_PRODUCTION
+            "is_production": IS_PRODUCTION,
+            "user": user,
+            "auth_enabled": AUTH_ENABLED
         }
     )
 

@@ -86,6 +86,11 @@ VYOS_API_KEY=your-api-key
 VYOS_HTTPS=true
 TRUST_SELF_SIGNED=true  # For self-signed certificates
 ENVIRONMENT=production  # or development
+
+# Authentication Settings (Optional)
+AUTH_ENABLED=false
+SESSION_SECRET=your_session_secret_key
+JWT_SECRET=your_jwt_secret_key
 ```
 
 2) Configuration in /frontend directory:
@@ -93,6 +98,38 @@ Create a `.env` file in the /frontend directory with the following configuration
 ```
 NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
+
+### Step 3) OpenID Connect Authentication (Optional):
+
+VyManager supports OpenID Connect (OIDC) for authentication. To enable it:
+
+1. Register an application with your OIDC provider (e.g., Auth0, Keycloak, Okta)
+2. Configure callback URLs:
+   - Login callback: `http://your-vymanager-host:3001/auth/callback`
+   - Logout callback: `http://your-vymanager-host:3001`
+3. Add the following to your `.env` file in the root directory:
+
+```
+# Authentication Settings
+AUTH_ENABLED=true
+SESSION_SECRET=your_session_secret_key
+JWT_SECRET=your_jwt_secret_key
+
+# OIDC Configuration
+OIDC_DISCOVERY_URL=https://your-identity-provider/.well-known/openid-configuration
+OIDC_CLIENT_ID=your_client_id
+OIDC_CLIENT_SECRET=your_client_secret
+OIDC_REDIRECT_URI=http://your-vymanager-host:3001/auth/callback
+OIDC_LOGOUT_REDIRECT_URI=http://your-vymanager-host:3001
+OIDC_SCOPES=openid email profile
+OIDC_USER_ROLES=user
+OIDC_ADMIN_ROLES=admin,superuser
+```
+
+4. Role-based Access:
+   - Configure your OIDC provider to include `roles` claim in the JWT token
+   - Define admin roles in `OIDC_ADMIN_ROLES` for users who should have administrative access
+   - Users with roles specified in `OIDC_USER_ROLES` will have standard access
 
 ---
 

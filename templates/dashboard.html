@@ -34,6 +34,23 @@
         .cache-actions {
             margin-top: 20px;
         }
+        
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background-color: #0d6efd;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .user-dropdown {
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -42,7 +59,23 @@
             <h1>VyManager Dashboard</h1>
             <div class="d-flex align-items-center">
                 <span class="badge bg-primary me-2">v{{ app_version }}</span>
-                <span class="badge bg-secondary">{{ vyos_host }}</span>
+                <span class="badge bg-secondary me-3">{{ vyos_host }}</span>
+                
+                {% if auth_enabled and user %}
+                <div class="dropdown">
+                    <div class="d-flex align-items-center user-dropdown" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        <div class="user-avatar">{{ user.name|first|upper if user.name else user.email|first|upper if user.email else "U" }}</div>
+                        <span>{{ user.name if user.name else user.email if user.email else "User" }}</span>
+                    </div>
+                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+                        <li><span class="dropdown-item-text"><strong>Email:</strong> {{ user.email if user.email else "Not provided" }}</span></li>
+                        <li><span class="dropdown-item-text"><strong>Roles:</strong> {{ ", ".join(user.roles) if user.roles else "None" }}</span></li>
+                        <li><span class="dropdown-item-text"><strong>Admin:</strong> {{ "Yes" if user.is_admin else "No" }}</span></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="/auth/logout">Logout</a></li>
+                    </ul>
+                </div>
+                {% endif %}
             </div>
         </header>
         
@@ -94,6 +127,11 @@
                         <p>App is running in <strong>{{ 'Production' if is_production else 'Development' }}</strong> mode.</p>
                         <p>Connected to VyOS router at <strong>{{ vyos_host }}</strong></p>
                         <p>Cache will automatically refresh every <strong>30-60 seconds</strong> depending on the endpoint.</p>
+                        {% if auth_enabled %}
+                        <p>Authentication is <strong>enabled</strong> with OpenID Connect.</p>
+                        {% else %}
+                        <p>Authentication is <strong>disabled</strong>.</p>
+                        {% endif %}
                     </div>
                 </div>
             </div>
