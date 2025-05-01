@@ -88,6 +88,9 @@ TRUST_SELF_SIGNED=true  # For self-signed certificates
 ENVIRONMENT=production  # or development
 
 # Authentication Settings (Optional)
+OIDC_DISCOVERY_URL=YOUR_OIDC_DISCOVERY_URL (example: https://accounts.google.com/.well-known/openid-configuration)
+OIDC_CLIENT_ID=YOUR_CLIENT_ID
+OIDC_CLIENT_SECRET=YOUR_SECRET
 AUTH_ENABLED=false
 SESSION_SECRET=your_session_secret_key
 JWT_SECRET=your_jwt_secret_key
