@@ -283,7 +283,7 @@ async def get_current_user(request: Request) -> Optional[User]:
     except Exception:
         return None
 
-def require_auth(request: Request) -> User:
+async def require_auth(request: Request) -> User:
     """Dependency to require authentication"""
     user = get_current_user(request)
     if not user:
@@ -293,7 +293,7 @@ def require_auth(request: Request) -> User:
         )
     return user
 
-def require_admin(request: Request) -> User:
+async def require_admin(request: Request) -> User:
     """Dependency to require admin role"""
     user = get_current_user(request)
     if not user or not user.is_admin:
